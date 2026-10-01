@@ -22,15 +22,9 @@ The extension requests context menus, downloads, clipboard writes, scripting, no
 
 Supported inputs depend on Chromium's image decoder. Conversion preserves intrinsic pixel dimensions; the browser's native canvas image path uses the animation default image or first frame when the format has no default image. SVGs without intrinsic size cannot be converted.
 
-## Project setup
+## Development
 
-[AGENTS.md](AGENTS.md) contains shared instructions; CLAUDE.md imports it. [AI_WORKFLOW.md](AI_WORKFLOW.md) provides the template's optional workflow guide.
-
-Validate setup with Python 3:
-
-```bash
-python3 scripts/check-agent-setup.py
-```
+See [docs/development.md](docs/development.md) for the source layout, conversion behavior, verification status, and packaging instructions.
 
 Run the isolated headless compatibility probe with Node 22+ and Brave:
 
@@ -38,10 +32,10 @@ Run the isolated headless compatibility probe with Node 22+ and Brave:
 node scripts/check-clipboard.mjs /usr/bin/brave
 ```
 
-Run filename tests with:
+Run filename and source-fetch timeout tests with:
 
 ```bash
 node --test
 ```
 
-The clipboard probe checks offscreen focus rejection, native JPEG rejection, and production current-tab PNG copy and paste, including unchanged tab count and page URL. It uses a temporary profile and headless clipboard. Production context-menu interaction, saves, headed browser behavior, desktop image-editor paste, and minimum Chromium version still need manual verification; see [PLAN.md](PLAN.md).
+The clipboard probe checks offscreen focus rejection, native JPEG rejection, and production current-tab PNG copy and paste, including unchanged tab count and page URL. It uses a temporary profile and headless clipboard. Production context-menu interaction, saves, headed browser behavior, desktop image-editor paste, and minimum Chromium version still need manual verification; see [docs/development.md](docs/development.md).

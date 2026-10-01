@@ -1,8 +1,14 @@
-# Local Claude Code preferences
+# Local AI development files
+AGENTS.md
+CLAUDE.md
 CLAUDE.local.md
-.claude/settings.local.json
+AI_WORKFLOW.md
+PLAN.md
+.claude/
+.codex/
+.agents/
 
-# Common local secrets; merge with the project's existing ignore rules
+# Local secrets
 .env
 .env.*
 !.env.example
