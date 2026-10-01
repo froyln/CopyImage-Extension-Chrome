@@ -4,6 +4,7 @@ CLAUDE.md
 CLAUDE.local.md
 AI_WORKFLOW.md
 PLAN.md
+scripts/check-agent-setup.py
 .claude/
 .codex/
 .agents/
