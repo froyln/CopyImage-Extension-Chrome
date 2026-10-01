@@ -1,0 +1,9 @@
+# Local Claude Code preferences
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Common local secrets; merge with the project's existing ignore rules
+.env
+.env.*
+!.env.example
+secrets/
