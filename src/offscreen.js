@@ -16,18 +16,17 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 
 async function convert(src, type, operation) {
-  if (!["image/png", "image/jpeg"].includes(type) || !["save", "copy"].includes(operation)) {
+  if (!["image/png", "image/jpeg"].includes(type) || !["save", "copy"].includes(operation)
+      || (operation === "copy" && type !== "image/png")) {
     throw new Error("Invalid conversion request");
   }
   const url = new URL(src);
   if (!["http:", "https:", "file:", "data:"].includes(url.protocol)) throw new Error("Unsupported image URL");
-  const response = await fetch(src, { credentials: "include" });
+  const response = await fetch(src, { credentials: "include", signal: AbortSignal.timeout(30000) });
   if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
   const inputURL = URL.createObjectURL(await response.blob());
   try {
-    const image = new Image();
-    image.src = inputURL;
-    await image.decode();
+    const image = await loadImage(inputURL);
     const width = image.naturalWidth, height = image.naturalHeight;
     if (!width || !height) throw new Error("Image has no intrinsic size (SVG without width/height?)");
     const canvas = document.createElement("canvas");
@@ -40,19 +39,15 @@ async function convert(src, type, operation) {
       context.fillRect(0, 0, width, height);
     }
     context.drawImage(image, 0, 0);
-    let blob = await encode(canvas, type);
-    if (operation === "copy" && type === "image/jpeg") {
-      const jpegURL = URL.createObjectURL(blob);
-      try {
-        const jpeg = new Image();
-        jpeg.src = jpegURL;
-        await jpeg.decode();
-        context.clearRect(0, 0, width, height);
-        context.drawImage(jpeg, 0, 0);
-        blob = await encode(canvas, "image/png");
-      } finally {
-        URL.revokeObjectURL(jpegURL);
-      }
+    const blob = await encode(canvas, type);
+    if (operation === "copy") {
+      const dataURL = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+      return { dataURL, type: blob.type, width, height };
     }
     const token = crypto.randomUUID();
     const outputURL = URL.createObjectURL(blob);
@@ -61,6 +56,15 @@ async function convert(src, type, operation) {
   } finally {
     URL.revokeObjectURL(inputURL);
   }
+}
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Could not decode the image"));
+    image.src = url;
+  });
 }
 
 function encode(canvas, type) {

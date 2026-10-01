@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -15,6 +16,7 @@ const server = createServer((request, response) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const extension = join(root, 'extension');
+const production = fileURLToPath(new URL('../src/', import.meta.url));
 await mkdir(extension);
 await writeFile(join(extension, 'manifest.json'), JSON.stringify({
   manifest_version: 3, name: 'Clipboard compatibility probe', version: '0.0.1',
@@ -45,16 +47,8 @@ async function probe(mode) {
   ctx.fillStyle = 'red'; ctx.fillRect(4, 0, 4, 8);
   const encode = type => new Promise((resolve, reject) => canvas.toBlob(
     blob => blob ? resolve(blob) : reject(new Error('Encoding failed')), type, 0.92));
-  let blob = await encode(mode === 'png' ? 'image/png' : 'image/jpeg');
+  const blob = await encode(mode === 'png' ? 'image/png' : 'image/jpeg');
   const encodedType = blob.type;
-  if (mode === 'fallback') {
-    const url = URL.createObjectURL(blob);
-    try {
-      const image = new Image(); image.src = url; await image.decode();
-      ctx.clearRect(0, 0, 8, 8); ctx.drawImage(image, 0, 0);
-      blob = await encode('image/png');
-    } finally { URL.revokeObjectURL(url); }
-  }
   await navigator.clipboard.write([new ClipboardItem({[blob.type]: blob})]);
   return {encodedType, clipboardType: blob.type};
 }
@@ -66,7 +60,7 @@ await writeFile(join(extension, 'probe.html'), '<!doctype html><textarea autofoc
 const browser = spawn(process.argv[2] || '/usr/bin/brave', [
   '--headless=new', '--no-first-run', '--no-default-browser-check',
   `--user-data-dir=${join(root, 'profile')}`, '--remote-debugging-port=0',
-  `--disable-extensions-except=${extension}`, `--load-extension=${extension}`, 'about:blank',
+  `--disable-extensions-except=${extension},${production}`, `--load-extension=${extension},${production}`, 'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 let log = '';
 browser.stderr.on('data', chunk => { log = (log + chunk).slice(-8000); });
@@ -146,7 +140,8 @@ try {
   console.log(JSON.stringify({offscreenWrite}));
   assert.match(offscreenWrite.error || '', /Document is not focused/);
   await call('Page.bringToFront', {}, sessionId);
-  for (const mode of ['png', 'fallback']) {
+  {
+    const mode = 'png';
     await call('Page.bringToFront', {}, sessionId);
     const write = await evaluate(sessionId, `probe(${JSON.stringify(mode)}).catch(error => ({error:error.name + ': ' + error.message}))`);
     console.log(JSON.stringify({focusedPageMode: mode, write}));
@@ -164,15 +159,58 @@ try {
     console.log(JSON.stringify({mode, pasted}));
     assert.equal(pasted?.type, 'image/png');
     assert.equal(pasted.width, 8); assert.equal(pasted.height, 8);
-    assert.equal(pasted.pixel[3], mode === 'png' ? 0 : 255);
-    if (mode === 'fallback') assert.ok(pasted.pixel.slice(0, 3).every(value => value >= 240));
+    assert.equal(pasted.pixel[3], 0);
   }
   console.log(JSON.stringify(await evaluate(sessionId, `({png:ClipboardItem.supports('image/png'), jpeg:ClipboardItem.supports('image/jpeg')})`)));
   await call('Page.bringToFront', {}, sessionId);
   const jpeg = await evaluate(sessionId, `probe('jpeg').then(() => ({ok:true}), error => ({error:error.name + ': ' + error.message}))`);
   console.log(JSON.stringify({focusedPageJpeg: jpeg}));
   assert.match(jpeg.error || '', /image\/jpeg.*not supported|not supported.*image\/jpeg/i);
-  console.log('Compatibility probe passed: offscreen focus failure reproduced; focused-page PNG/JPG fallback paste works. Desktop editor paste remains manual.');
+  const productionWorker = (await call('Target.getTargets')).targetInfos.find(t =>
+    t.type === 'service_worker' && t.url.endsWith('/background.js'));
+  assert.ok(productionWorker, 'Production extension did not load');
+  const {sessionId: productionSession} = await call('Target.attachToTarget', {targetId: productionWorker.targetId, flatten: true});
+  await call('Runtime.enable', {}, productionSession);
+  const source = await evaluate(sessionId, `(() => {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 8;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = 'red'; ctx.fillRect(4, 0, 4, 8);
+    return canvas.toDataURL('image/png');
+  })()`);
+  {
+    const type = 'image/png';
+    await call('Page.bringToFront', {}, pasteSession);
+    const copied = await evaluate(productionSession, `(async () => {
+      const before = await chrome.tabs.query({});
+      const tab = before.find(tab => tab.url === ${JSON.stringify(`http://127.0.0.1:${server.address().port}/`)});
+      await copyImage(${JSON.stringify(source)}, ${JSON.stringify(type)}, tab.id);
+      const after = await chrome.tabs.query({});
+      return {before: before.length, after: after.length, url: after.find(item => item.id === tab.id).url};
+    })()`);
+    assert.equal(copied.before, copied.after, 'Copy must not open a tab');
+    assert.equal(copied.url, `http://127.0.0.1:${server.address().port}/`, 'Copy must not navigate the page');
+    await evaluate(pasteSession, 'window.pasted = null; document.querySelector("textarea").focus()');
+    await call('Input.dispatchKeyEvent', {type:'keyDown', key:'v', code:'KeyV', windowsVirtualKeyCode:86, modifiers:2}, pasteSession);
+    await call('Input.dispatchKeyEvent', {type:'keyUp', key:'v', code:'KeyV', windowsVirtualKeyCode:86, modifiers:2}, pasteSession);
+    let pasted;
+    for (let i = 0; i < 50; i++) {
+      pasted = await evaluate(pasteSession, 'window.pasted');
+      if (pasted) break;
+      await delay(100);
+    }
+    assert.equal(pasted?.type, 'image/png');
+    assert.equal(pasted.width, 8); assert.equal(pasted.height, 8);
+    assert.equal(pasted.pixel[3], 0);
+    console.log(JSON.stringify({productionCopy: type, copied, pasted}));
+  }
+  await call('Page.bringToFront', {}, sessionId);
+  const unfocused = await evaluate(productionSession, `(async () => {
+    const tabs = await chrome.tabs.query({});
+    const tab = tabs.find(tab => tab.url === ${JSON.stringify(`http://127.0.0.1:${server.address().port}/`)});
+    return copyImage(${JSON.stringify(source)}, 'image/png', tab.id).then(() => 'unexpected success', error => error.message);
+  })()`);
+  assert.match(unfocused, /focused/);
+  console.log(JSON.stringify({unfocusedProductionCopy: unfocused}));
+  console.log('Probe passed: clipboard compatibility and production current-tab PNG copy/paste work without opening or navigating tabs. Desktop editor paste remains manual.');
 } finally {
   socket?.close();
   browser.kill('SIGTERM');

@@ -2,11 +2,13 @@
 
 ## Active task
 
-**Goal:** Port Convert Image from `/home/froyln/Dev/CopyImage-Firefox` to Chromium, preserving save/copy PNG and JPG behavior with explicit clipboard compatibility.
+**Goal:** Port Convert Image from Firefox to Chromium, offering save PNG, save JPG, and copy PNG. The user removed JPG copying because its clipboard representation was PNG.
 
-**Status:** Steps 1–9 implemented. Step 10 browser and failure-path acceptance is pending; package only after acceptance.
+**Status:** Steps 1–9 implemented. Step 10's filename, isolated clipboard, and production current-tab copy/paste checks pass. Headed menu, save, failure/lifecycle, and desktop paste acceptance remain pending. Package only after acceptance.
 
 **Scope:** User continued the planned port through implementation Steps 4–9. Use plain JavaScript, native browser APIs, and no build system or new runtime dependencies. Leave the Firefox project unchanged.
+
+**Current copy decision (2026-10-01):** The user rejected the visible copy page and instructed one-click copying without moving the current page. This supersedes the earlier focused-copy-page approval recorded below. Conversion stays offscreen; a clipboard writer runs in the current tab's isolated script context using `scripting` and existing host/clipboard permissions. Copy requires a secure focused page. No copy page is shipped.
 
 ## Step 1 — Initialize the workspace (complete)
 
@@ -16,7 +18,7 @@
 
 **Completion check:** `python3 scripts/check-agent-setup.py` passed with `Agent setup is valid`.
 
-**Repository binding (2026-09-30):** Initialized local Git on `main` and set `origin` to `https://github.com/froyln/CopyImage-Extension-Chrome.git`. `git ls-remote origin` succeeded with no advertised refs. Re-ran the setup validator successfully. No commit or push was made.
+**Repository binding (2026-09-30):** Initialized local Git on `main` and configured its GitHub remote. Re-ran the setup validator successfully.
 
 ## Step 2 — Confirm the behavior to preserve (complete)
 
@@ -48,7 +50,7 @@ Read Firefox `src/manifest.json` (Convert Image 1.0.2), `src/background.js`, `sr
 
 **Animation source:** [HTML canvas image-source rules](https://html.spec.whatwg.org/multipage/canvas.html#image-sources-for-2d-rendering-contexts). This conclusion comes from the actual conversion path plus the standard, not a browser experiment.
 
-**Verification:** `node --test /home/froyln/Dev/CopyImage-Firefox/test/name.test.js` passed (exit 0). The Firefox reference was left unchanged. No extension/browser/clipboard checks were run in this step.
+**Verification:** The reference filename tests passed (exit 0). The Firefox reference was left unchanged. No extension/browser/clipboard checks were run in this step.
 
 ## Step 3 — Resolve clipboard compatibility before completing the menus (complete)
 
@@ -79,7 +81,7 @@ The [Chromium clipboard implementation](https://chromium.googlesource.com/chromi
 
 **Additional attempts:** The first launch was sandbox-blocked (`setsockopt: Operation not permitted`); the same probe ran successfully outside the sandbox after approval. Google Chrome 154.0.8037.57 launched, but the command-line probe extension was not usable; no Chrome clipboard results are claimed. A selected-image `execCommand('copy')` experiment stalled in headless Brave; it is not a proven fallback and was removed from the runnable probe.
 
-**Approved decision:** The user approved the focused copy-page approach and explicit PNG clipboard fallback after the explanation of its visible-page behavior. Keep conversion offscreen and use a focused extension copy page for clipboard writes. Label the JPG copy action **Copy image with JPG appearance (PNG clipboard)** and explain the JPEG encode/decode step in README. This replaces the offscreen-only clipboard constraint; no further approval is needed for this choice.
+**Earlier approved decision (copy-page approach superseded 2026-10-01):** The user approved a focused copy page at this stage. The newer instruction above removes that page. The approved JPG appearance/PNG clipboard representation remains in effect; do not claim native JPEG parity.
 
 **Completion:** PNG and JPG-fallback paste into an ordinary localhost web page passed, and the user settled the exact copy behavior. Step 3's compatibility decision is complete. Desktop image-editor paste, headed browser behavior, minimum-version verification, and the production copy-page interaction remain explicit acceptance gates in Steps 9–10. The canvas paste check does not prove desktop editor acceptance.
 
@@ -105,12 +107,12 @@ The [Chromium clipboard implementation](https://chromium.googlesource.com/chromi
 
 ## Step 6 — Register menus and route actions (implemented)
 
-- Register the four image-only actions through chrome.contextMenus during installation/update, without creating duplicates on worker restarts.
+- Register the three image-only actions through chrome.contextMenus during installation/update, without creating duplicates on worker restarts.
 - Register event listeners synchronously at the service worker's top level.
-- Validate menu IDs and source URLs before processing; accept only the four intended actions.
+- Validate menu IDs and source URLs before processing; accept only the three intended actions.
 - Ensure one offscreen document exists before sending a request. Guard simultaneous creation and rediscover an existing document after worker restart.
 - Route conversion/clipboard requests through runtime messages containing JSON-compatible values. Check message destination and sender; return structured success/error results.
-- For copy actions, open the focused extension copy page from the worker. Keep conversion in the offscreen document and clipboard writes in the copy page; track temporary copy resources through completion, failure, and page closure.
+- For copy actions, convert offscreen and inject the clipboard writer into the current tab. Return PNG as a data URL for JSON messaging without holding copy object URLs. Report errors through notifications and never open or navigate tabs.
 
 **Completion check:** Each menu action reaches the correct operation once; rapid clicks and worker restarts do not duplicate menus or create competing offscreen documents.
 
@@ -139,8 +141,8 @@ The [Chromium clipboard implementation](https://chromium.googlesource.com/chromi
 
 ## Step 9 — Implement clipboard actions and errors (implemented)
 
-- Write PNG using navigator.clipboard.write and ClipboardItem in the focused extension copy page. Handle lost focus explicitly and provide a Copy button to retry; never report success before the write resolves.
-- Implement the approved JPG-to-PNG clipboard fallback: white background, JPEG quality 0.92, decode JPEG, then write PNG. Use the explicit JPG-appearance/PNG-clipboard menu label.
+- Write PNG using navigator.clipboard.write and ClipboardItem in the current tab's isolated script context. Handle lost focus and insecure/protected pages with error notifications; never report success before the write resolves. No copy button or extra page.
+- Copy only PNG. Save JPG with a white background and JPEG quality 0.92; the user removed the JPG-to-PNG clipboard fallback.
 - Preserve existing clipboard contents when conversion fails by writing only after successful encoding.
 - Send failures to the worker for notifications with a bundled icon and bounded source URL text.
 - Treat save cancellation quietly and avoid swallowing genuine conversion or clipboard errors.
@@ -151,12 +153,12 @@ The [Chromium clipboard implementation](https://chromium.googlesource.com/chromi
 
 - Run `node --test` for the reused filename tests.
 - Add only focused runnable checks for substantive new routing/lifecycle logic when implementation is authorized; use Node's built-in test runner rather than adding a framework.
-- Manually check each of the four actions against representative supported image inputs.
+- Manually check each of the three actions against representative supported image inputs.
 - Check transparency, white JPG backgrounds, dimensions, image signatures, JPEG quality behavior, encoded/query-string filenames, and fallback filenames.
 - Check corrupt images, failed HTTP responses, blocked fetches, SVGs without intrinsic size, and inaccessible blob URLs.
 - Check rapid repeated actions, cancelled save dialogs, interrupted downloads, worker suspension during operations, extension reload, and browser restart.
 - Verify normal operation with developer tools closed so inspection does not hide lifecycle issues.
-- Verify the focused copy page, loss of focus and retry, copy-page closure cleanup, desktop image-editor paste, and headed-browser paste. Record tested versions; Chromium 116 remains an untested minimum until verified.
+- Verify current-page copy without opening/navigating tabs, loss of focus and retrying the menu action, desktop image-editor paste, and headed-browser paste. Record tested versions; Chromium 116 remains an untested minimum until verified.
 
 **Completion check:** Record browser/version, exact automated commands/results, manual outcomes, and any unverified behavior. No unexplained runtime errors remain.
 
@@ -180,7 +182,7 @@ The [Chromium clipboard implementation](https://chromium.googlesource.com/chromi
 
 ## Final acceptance
 
-- Four image-only context menu actions operate with explicitly documented clipboard compatibility.
+- Three image-only context menu actions operate: save PNG, save JPG, and copy PNG.
 - Saved PNG/JPG files have correct formats, dimensions, names, and transparency/background behavior.
 - Copied images paste into ordinary destinations.
 - Failure, cancellation, concurrency, download cleanup, and worker restart checks pass.
@@ -191,8 +193,44 @@ The [Chromium clipboard implementation](https://chromium.googlesource.com/chromi
 
 **Files changed:** MV3 extension files and PNG icons in src/, copied filename helper/test, scripts/check-clipboard.mjs, and updated README.md, AGENTS.md, PLAN.md.
 
-**Decisions:** Reuse Firefox behavior and helper/tests; minimum target Chromium version is 116. Preserve canvas default-image/first-frame animation behavior. Offscreen async clipboard writes fail on tested Chromium 151; focused-page PNG and JPEG-to-PNG fallback writes/pastes pass. User approved the focused copy page and explicit PNG clipboard representation; do not claim native JPEG parity.
+**Decisions:** Reuse Firefox behavior and helper/tests; minimum target Chromium version is 116. Preserve canvas default-image/first-frame animation behavior. Convert offscreen with image load events and write PNG from the current tab without opening/navigating tabs. Only PNG is copied; saving JPG produces JPEG. Secure focused pages are required for copy.
 
-**Checks completed:** Setup validator, reference filename check, and filename test passed. Syntax checks passed for extension and probe scripts; manifest JSON parses and all four icons are valid PNGs. Headless Brave clipboard probe passed, including offscreen focus failure, native JPEG rejection, and ordinary-page PNG/fallback paste. Production extension, desktop editor paste, and unpacked browser checks have not run.
+**Checks completed:** Setup validator, filename and source-fetch timeout tests, syntax checks, and diff checks passed. Manifest JSON parses and all four icons are valid PNGs. Expanded headless Brave probe passed production PNG/JPG-appearance copy/paste from a fresh offscreen document, unchanged tab count/URL, and focus-loss rejection. Desktop editor paste, headed context-menu actions, saves, and lifecycle acceptance remain pending.
 
-**Next action:** Step 10 — run filename tests, load src/ unpacked in Chromium, then check all four actions, save cancellation/interruption, clipboard focus retry, and cleanup. Do not package until acceptance passes or limitations are recorded.
+**Next action:** Reload src/ unpacked to remove the old JPG-copy menu, then check all three context-menu actions, save cancellation/interruption, desktop paste, and cleanup. Do not package until acceptance passes or limitations are recorded.
+
+### Step 10 progress (2026-10-01)
+
+- `node --test` passed (1 test file, 1 test).
+- `node scripts/check-clipboard.mjs /usr/bin/brave` passed on Brave/Chromium 151.0.7922.173: the offscreen focus failure reproduced, focused-page PNG and JPG-appearance fallback pasted as PNG with expected dimensions and transparency/white pixels, and native JPEG clipboard writes were rejected as unsupported. This probe uses an isolated headless profile and does not verify the production extension or desktop editor paste.
+- No browser session was available for headed unpacked-extension testing. Production context menus, save dialogs/contents, copy-page focus retry and cleanup, error notifications, desktop editor paste, and lifecycle/failure cases remain unverified. Chromium 116 remains untested.
+
+**Next action:** Run headed production acceptance with `src/` loaded unpacked, then record exact outcomes before packaging. Keep the package step pending until the acceptance results or remaining limitations are explicit.
+
+### Copy-page failure investigation (2026-10-01)
+
+The user loaded the production extension in Brave and reported both copy actions remaining on **Preparing image…**; a screenshot confirms the initial state persists. The exact source image loads in a normal Brave tab at 250×372. The live conversion stage and runtime failure are not yet known.
+
+Code inspection found an unbounded source fetch, which can leave preparation pending indefinitely. Added a 30-second abort signal covering fetch and response-body reads, copy-page messages distinguishing conversion from reading the converted blob, and error responses before notification creation so notification failure cannot prevent the reply. These changes address concrete failure paths without claiming the reported runtime cause has been reproduced.
+
+Added `test/offscreen.test.js` to verify a stalled fetch sends a timeout error through the actual offscreen message listener. `node --test` passed (2 test files), syntax checks for the three extension scripts passed, and `git diff --check` passed.
+
+**Next action:** Reload the unpacked extension, start a fresh copy action, and verify whether the Copy button appears or a timeout/error is reported. Production acceptance and packaging remain pending.
+
+### Direct-copy implementation and reproduced cause (2026-10-01)
+
+The user rejected the copy-page interaction. Removed `src/copy.html` and `src/copy.js`, their worker messaging handlers, and the tab-opening copy path. Added `scripting` permission and current-tab PNG clipboard writing after offscreen conversion. JPG appearance retains white fill, JPEG quality 0.92, and PNG clipboard representation. Copy has no visible page transition. Ordinary HTTP and browser-protected pages cannot use this clipboard flow; errors are notified. HTTPS and localhost secure pages are supported, and saves retain HTTP support.
+
+The isolated production test reproduced the hang with a tiny local PNG. Fetch, body read, and the image load event completed, but `Image.decode()` in the production offscreen document never resolved on Brave/Chromium 151. Replaced both input and JPG-fallback decode waits with image load/error events before canvas drawing. The former network-timeout change did not fix this reproduced cause; it remains useful for stalled fetches.
+
+Expanded `scripts/check-clipboard.mjs` to load the actual production extension alongside its compatibility probe. Both production PNG and JPG-appearance paths passed conversion, current-tab clipboard writing, and ordinary Ctrl+V paste on Chromium 151.0.7922.173. Each produced an 8×8 PNG; alpha was 0 for PNG and 255 with near-white RGB for JPG appearance. Tab count stayed at 3 and the source-page URL was unchanged. This is an isolated headless test invoked through the worker, not manual context-menu or desktop editor acceptance.
+
+**Next action:** Reload the unpacked extension to pick up the new scripting permission and code, then test the real context menu on a focused HTTPS page. Continue save/failure/lifecycle and desktop paste acceptance before packaging.
+
+### Remove JPG copying (2026-10-01)
+
+The user confirmed that current-page copy works, then requested removal of JPG copying because it placed PNG on the clipboard. Removed `copy-jpg` and the JPEG-to-PNG copy conversion branch. Offscreen requests now reject JPEG copying. The menu has three actions: save PNG, save JPG, and copy PNG. Updated the manifest description, README, AGENTS, acceptance scope, and clipboard probe. Earlier JPG-copy results above are historical, not current features.
+
+**Verification:** `node --test`, script syntax checks, setup validator, and `git diff --check` passed. The updated isolated Brave 151 clipboard probe passed production PNG copy/paste with transparency, unchanged tab count/URL, and focus-loss rejection.
+
+**Next action:** Reload the unpacked extension to rebuild its menus with the three actions. Continue remaining save, lifecycle, and desktop paste acceptance before packaging.

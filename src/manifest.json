@@ -2,12 +2,13 @@
   "manifest_version": 3,
   "name": "Convert Image",
   "version": "1.0.2",
-  "description": "Save or copy images as PNG or JPG.",
+  "description": "Save images as PNG or JPG, or copy as PNG.",
   "minimum_chrome_version": "116",
   "permissions": [
     "contextMenus",
     "downloads",
     "clipboardWrite",
+    "scripting",
     "notifications",
     "offscreen"
   ],
